@@ -1,0 +1,9 @@
+numpy>=1.19.0
+pandas>=1.1.0
+matplotlib>=3.3.0
+scipy>=1.5.0
+yfinance>=0.1.60
+statsmodels>=0.12.0
+arch>=4.19.0
+seaborn>=0.11.0
+requests>=2.25.0
