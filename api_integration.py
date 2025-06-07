@@ -54,6 +54,64 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         """
         self.api_key = api_key
     
+    def fetch_intraday_data(self, symbol, interval='5min', output_size='compact'):
+        """
+        Fetch intraday data for a symbol from Alpha Vantage.
+        
+        Parameters:
+        -----------
+        symbol : str
+            Stock symbol
+        interval : str, optional
+            Time interval between data points, by default '5min'
+            Options: '1min', '5min', '15min', '30min', '60min'
+        output_size : str, optional
+            Output size, by default 'compact'
+            Options: 'compact' (latest 100 data points), 'full' (up to 20 years of data)
+            
+        Returns:
+        --------
+        pandas.DataFrame
+            DataFrame containing the intraday data
+        """
+        if self.api_key is None:
+            raise ValueError("API key must be set before fetching data")
+        
+        # Alpha Vantage API endpoint -> intraday data
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={symbol}&interval={interval}&outputsize={output_size}&apikey={self.api_key}"
+        
+        response = requests.get(url)
+        data = response.json()
+        
+        if "Error Message" in data:
+            raise ValueError(f"Error fetching data for {symbol}: {data['Error Message']}")
+        
+        if "Time Series" not in data:
+            raise ValueError(f"No data available for {symbol}")
+        
+        time_series_key = f"Time Series ({interval})"
+        time_series = data[time_series_key]
+        
+        df = pd.DataFrame(time_series).T
+        df.index = pd.to_datetime(df.index)        
+        df = df.apply(pd.to_numeric)
+        df.rename(columns={
+            "1. open": "Open",
+            "2. high": "High",
+            "3. low": "Low",
+            "4. close": "Close",
+            "5. volume": "Volume"
+        }, inplace=True)
+        
+        df.sort_index(inplace=True) # by date
+        
+        self.data_cache[symbol] = {
+            'data': df,
+            'last_update': datetime.now()
+        }
+        
+        return df
+    
     def fetch_daily_data(self, symbol, output_size='compact'):
         """
         Fetch daily data for a symbol from Alpha Vantage.
@@ -74,7 +132,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         if self.api_key is None:
             raise ValueError("API key must be set before fetching data")
         
-        # Alpha Vantage API endpoint for daily data
+        # Alpha Vantage API endpoint -> daily data
         url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={symbol}&outputsize={output_size}&apikey={self.api_key}"
         
         response = requests.get(url)
@@ -102,7 +160,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
             "8. split coefficient": "Split Coefficient"
         }, inplace=True)
         
-        df.sort_index(inplace=True)  # Sort by date
+        df.sort_index(inplace=True) # by date
         
         self.data_cache[symbol] = {
             'data': df,
@@ -111,7 +169,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         
         return df
     
-    def fetch_multiple_symbols(self, symbols, output_size='compact'):
+    def fetch_multiple_symbols(self, symbols, data_type='daily', **kwargs):
         """
         Fetch data for multiple symbols from Alpha Vantage.
         
@@ -119,8 +177,11 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         -----------
         symbols : list
             List of stock symbols
-        output_size : str, optional
-            Output size, by default 'compact'
+        data_type : str, optional
+            Type of data to fetch, by default 'daily'
+            Options: 'daily', 'intraday'
+        **kwargs : dict
+            Additional arguments to pass to the fetch function
             
         Returns:
         --------
@@ -133,7 +194,13 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
             print(f"Fetching data for {symbol}...")
             
             try:
-                df = self.fetch_daily_data(symbol, output_size=output_size)
+                if data_type == 'daily':
+                    df = self.fetch_daily_data(symbol, **kwargs)
+                elif data_type == 'intraday':
+                    df = self.fetch_intraday_data(symbol, **kwargs)
+                else:
+                    raise ValueError(f"Unknown data type: {data_type}")
+                
                 all_data[symbol] = df
                 
                 # IMPORTANT: Alpha Vantage has a rate limit of 5 API calls per minute for free tier
@@ -144,7 +211,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         
         return all_data
     
-    def update_model_with_api_data(self, symbols, use_cache=True, cache_expiry_minutes=60, output_size='compact'):
+    def update_model_with_api_data(self, symbols, data_type='daily', use_cache=True, cache_expiry_minutes=60, **kwargs):
         """
         Update the model with data fetched from Alpha Vantage API.
         
@@ -152,12 +219,15 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         -----------
         symbols : list
             List of stock symbols
+        data_type : str, optional
+            Type of data to fetch, by default 'daily'
+            Options: 'daily', 'intraday'
         use_cache : bool, optional
             Whether to use cached data if available, by default True
         cache_expiry_minutes : int, optional
             Cache expiry time in minutes, by default 60
-        output_size : str, optional
-            Output size, by default 'compact'
+        **kwargs : dict
+            Additional arguments to pass to the fetch function
             
         Returns:
         --------
@@ -167,7 +237,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         all_data = {}
         
         for symbol in symbols:
-            if (use_cache and symbol in self.data_cache and  # If cached data available
+            if (use_cache and symbol in self.data_cache and # if cached data available
                 (datetime.now() - self.data_cache[symbol]['last_update']).total_seconds() < cache_expiry_minutes * 60):
                 print(f"Using cached data for {symbol}...")
                 all_data[symbol] = self.data_cache[symbol]['data']
@@ -175,7 +245,13 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
                 print(f"Fetching data for {symbol}...")
                 
                 try:
-                    df = self.fetch_daily_data(symbol, output_size=output_size)
+                    if data_type == 'daily':
+                        df = self.fetch_daily_data(symbol, **kwargs)
+                    elif data_type == 'intraday':
+                        df = self.fetch_intraday_data(symbol, **kwargs)
+                    else:
+                        raise ValueError(f"Unknown data type: {data_type}")
+                    
                     all_data[symbol] = df
                     
                     # IMPORTANT: Alpha Vantage has a rate limit of 5 API calls per minute for free tier
@@ -185,7 +261,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
                     print(f"Error fetching data for {symbol}: {e}")
                     continue
         
-        # Extract closing prices
+        # closing prices
         prices = {}
         for symbol, df in all_data.items():
             if 'Adjusted Close' in df.columns:
@@ -193,20 +269,20 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
             else:
                 prices[symbol] = df['Close']
         
-        # Combine all assets into a single DataFrame
+        # combine all assets into a single DataFrame
         prices_df = pd.DataFrame(prices)
         returns_df = prices_df.pct_change().dropna()
         
         self.assets = list(returns_df.columns)
         self.returns = returns_df
         
-        self.cov_matrix = returns_df.cov() * 252  # Assuming 252 trading days in a year
+        self.cov_matrix = returns_df.cov() * 252  # assuming 252 trading days in a year (can be changed further on)
         
         self.last_update_time = datetime.now()
         
         return returns_df
     
-    def schedule_regular_updates(self, symbols, update_interval_minutes=60, max_updates=None, output_size='compact'):
+    def schedule_regular_updates(self, symbols, update_interval_minutes=60, max_updates=None, data_type='daily', **kwargs):
         """
         Schedule regular updates of the model with new data.
         
@@ -218,8 +294,11 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
             Update interval in minutes, by default 60
         max_updates : int, optional
             Maximum number of updates to perform, by default None (unlimited)
-        output_size : str, optional
-            Output size, by default 'compact'
+        data_type : str, optional
+            Type of data to fetch, by default 'daily'
+            Options: 'daily', 'intraday'
+        **kwargs : dict
+            Additional arguments to pass to the update function
             
         Returns:
         --------
@@ -232,7 +311,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
                 print(f"\nUpdate {update_count + 1}" + (f" of {max_updates}" if max_updates else ""))
                 print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 
-                self.update_model_with_api_data(symbols, output_size=output_size)
+                self.update_model_with_api_data(symbols, data_type=data_type, **kwargs)
                 
                 self.generate_efficient_frontier()
                 
@@ -255,7 +334,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         except KeyboardInterrupt:
             print("\nUpdates stopped by user.")
     
-    def plot_real_time_efficient_frontier(self, show_assets=True, show_optimal=True, figsize=(12, 8)):
+    def plot_real_time_efficient_frontier(self, show_assets=True, show_cal=True, show_optimal=True, random_portfolios=0, figsize=(12, 8)):
         """
         Plot the efficient frontier with real-time data.
         
@@ -263,8 +342,12 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         -----------
         show_assets : bool, optional
             Whether to show individual assets, by default True
+        show_cal : bool, optional
+            Whether to show the capital allocation line, by default True
         show_optimal : bool, optional
             Whether to show the optimal portfolio, by default True
+        random_portfolios : int, optional
+            Number of random portfolios to generate, by default 0
         figsize : tuple, optional
             Figure size, by default (12, 8)
             
@@ -277,7 +360,7 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         if self.efficient_frontier is None:
             self.generate_efficient_frontier()
         
-        fig = self.plot_efficient_frontier(show_assets, show_optimal, figsize=figsize)
+        fig = self.plot_efficient_frontier(show_assets, show_cal, show_optimal, random_portfolios, figsize)
         
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         fig.axes[0].set_title(f'Efficient Frontier (as of {timestamp})')
@@ -349,3 +432,96 @@ class APIEnhancedMarkowitzModel(MarkowitzModel):
         ax.set_title('Correlation Matrix')
         
         return fig
+    
+    def get_market_sentiment(self, symbols):
+        """
+        Get market sentiment for the given symbols using Alpha Vantage's News & Sentiment API.
+        
+        Parameters:
+        -----------
+        symbols : list
+            List of stock symbols
+            
+        Returns:
+        --------
+        dict
+            Dictionary containing sentiment scores for each symbol
+        """
+        
+        if self.api_key is None:
+            raise ValueError("API key must be set before fetching sentiment data")
+        
+        sentiment_scores = {}
+        
+        for symbol in symbols:
+            print(f"Fetching sentiment data for {symbol}...")
+            
+            # Alpha Vantage API endpoint -> news sentiment
+            url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={symbol}&apikey={self.api_key}"
+            
+            response = requests.get(url)
+            data = response.json()
+            
+            if "Error Message" in data:
+                print(f"Error fetching sentiment data for {symbol}: {data['Error Message']}")
+                continue
+            
+            if "feed" not in data:
+                print(f"No sentiment data available for {symbol}")
+                continue
+            
+            feed_items = data["feed"]
+            
+            sentiment_sum = 0
+            sentiment_count = 0
+            
+            for item in feed_items:
+                if "ticker_sentiment" in item:
+                    for ticker_sentiment in item["ticker_sentiment"]:
+                        if ticker_sentiment["ticker"] == symbol:
+                            sentiment_score = float(ticker_sentiment["ticker_sentiment_score"])
+                            sentiment_sum += sentiment_score
+                            sentiment_count += 1
+            
+            if sentiment_count > 0:
+                avg_sentiment = sentiment_sum / sentiment_count
+                sentiment_scores[symbol] = avg_sentiment
+            else:
+                sentiment_scores[symbol] = None
+            
+            # Alpha Vantage rate limit
+            time.sleep(12)
+        
+        return sentiment_scores
+    
+    def adjust_returns_with_sentiment(self, sentiment_scores, adjustment_factor=0.2):
+        """
+        Adjust expected returns based on market sentiment.
+        
+        Parameters:
+        -----------
+        sentiment_scores : dict
+            Dictionary containing sentiment scores for each symbol
+        adjustment_factor : float, optional
+            Factor to adjust returns by, by default 0.2
+            
+        Returns:
+        --------
+        pandas.Series
+            Adjusted expected returns
+        """
+        
+        if self.returns is None:
+            raise ValueError("No return data available. Please fetch data first.")
+        
+        expected_returns = self.returns.mean() * 252
+        
+        adjusted_returns = expected_returns.copy()
+        
+        for symbol, sentiment in sentiment_scores.items():
+            if symbol in adjusted_returns and sentiment is not None:
+                # sentiment scores are typically between -1 and 1
+                # adjust returns up or down based on sentiment
+                adjusted_returns[symbol] *= (1 + adjustment_factor * sentiment)
+        
+        return adjusted_returns
