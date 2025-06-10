@@ -1,13 +1,12 @@
 """
-Monte Carlo Simulation Enhancement
+Advanced Monte Carlo Simulation Enhancement
 
-This script demonstrates how to enhance the Markowitz model with Monte Carlo
+This script demonstrates how to enhance the Markowitz model with advanced Monte Carlo
 simulation techniques to analyze the robustness of the portfolio across different
 market scenarios and calculate various risk metrics.
-
-@author: Pedro Gronda Garrigues
 """
 
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -17,7 +16,7 @@ from model import MarkowitzModel
 
 class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
     """
-    An enhanced version of the Markowitz model that uses Monte Carlo
+    An enhanced version of the Markowitz model that uses advanced Monte Carlo
     simulation techniques to analyze portfolio performance and risk.
     """
     
@@ -53,7 +52,7 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
             Array of simulated portfolio values
         """
         if self.optimal_portfolio is None:
-            self.generate_efficient_frontier()
+            raise ValueError("Optimal portfolio must be calculated before running Monte Carlo simulation")
         
         if seed is not None:
             np.random.seed(seed)
@@ -61,16 +60,21 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         weights = np.array(list(self.optimal_portfolio['weights'].values()))
         
         mean_returns = self.returns.mean().values
-        cov_matrix = self.cov_matrix.values / 252  # Daily covariance
+        cov_matrix = self.cov_matrix.values
         
-        portfolio_return = np.sum(mean_returns * weights) * 252
-        portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix * 252, weights)))
+        portfolio_return = np.sum(mean_returns * weights)
+        portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
         
         simulation_results = np.zeros((num_simulations, time_horizon + 1))
         simulation_results[:, 0] = initial_value
         
         # Simulate using Geometric Brownian Motion
         # dS = mu * S * dt + sigma * S * dW
+        #### S is the portfolio value, 
+        #### mu is the drift,
+        #### sigma is the volatility,
+        #### dt is the time step,
+        #### dW is the Wiener process increment
         dt = 1/252  # Daily time step (assuming 252 trading days in a year)
         
         for t in range(1, time_horizon + 1):
@@ -105,7 +109,7 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
             Array of simulated portfolio values
         """
         if self.optimal_portfolio is None:
-            self.generate_efficient_frontier()
+            raise ValueError("Optimal portfolio must be calculated before running Monte Carlo simulation")
         
         if seed is not None:
             np.random.seed(seed)
@@ -119,16 +123,116 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         
         num_returns = len(portfolio_returns)
         
+        num_blocks = int(np.ceil(time_horizon / block_size))
+        
         for i in range(num_simulations):
             portfolio_value = initial_value
             
-            for t in range(1, time_horizon + 1):
-                # Randomly sample from historical returns
-                idx = np.random.randint(0, num_returns)
-                return_t = portfolio_returns[idx]
+            for j in range(num_blocks):
+                start_idx = np.random.randint(0, num_returns - block_size + 1)
                 
-                portfolio_value *= (1 + return_t)
-                simulation_results[i, t] = portfolio_value
+                block_returns = portfolio_returns[start_idx:start_idx + block_size]
+                
+                days_to_use = min(block_size, time_horizon - j * block_size)
+                
+                for k in range(days_to_use):
+                    t = j * block_size + k + 1
+                    if t <= time_horizon:
+                        portfolio_value *= (1 + block_returns[k])
+                        simulation_results[i, t] = portfolio_value
+        
+        return simulation_results
+    
+    def simulate_multivariate(self, num_simulations=1000, time_horizon=252, initial_value=1.0, method='normal', seed=None):
+        """
+        Simulate portfolio value using multivariate simulation of asset returns.
+        
+        Parameters:
+        -----------
+        num_simulations : int, optional
+            Number of simulations to run, by default 1000
+        time_horizon : int, optional
+            Time horizon in days, by default 252 (1 year)
+        initial_value : float, optional
+            Initial portfolio value, by default 1.0
+        method : str, optional
+            Method for generating random returns, by default 'normal'
+            Options: 'normal', 't', 'copula'
+        seed : int, optional
+            Random seed for reproducibility, by default None
+            
+        Returns:
+        --------
+        numpy.ndarray
+            Array of simulated portfolio values
+        """
+        if self.optimal_portfolio is None:
+            raise ValueError("Optimal portfolio must be calculated before running Monte Carlo simulation")
+        
+        if seed is not None:
+            np.random.seed(seed)
+        
+        weights = np.array(list(self.optimal_portfolio['weights'].values()))
+        
+        mean_returns = self.returns.mean().values
+        cov_matrix = self.cov_matrix.values / 252  # Daily covariance
+        
+        simulation_results = np.zeros((num_simulations, time_horizon + 1))
+        simulation_results[:, 0] = initial_value
+        
+        if method == 'normal':
+            random_returns = np.random.multivariate_normal(
+                mean_returns, cov_matrix, (num_simulations, time_horizon)
+            )
+        elif method == 't':
+            # random returns using multivariate t distribution
+            # with 5 degrees of freedom (heavier tails than normal)
+            df = 5 # DoF
+            
+            # multivariate normal samples
+            normal_samples = np.random.multivariate_normal(
+                np.zeros_like(mean_returns), cov_matrix, (num_simulations, time_horizon)
+            )
+            
+            # chi-squared samples
+            chi2_samples = np.random.chisquare(df, (num_simulations, time_horizon, 1))
+            
+            # convert to multivariate t samples
+            t_samples = normal_samples / np.sqrt(chi2_samples / df)
+            
+            random_returns = t_samples + mean_returns
+        elif method == 'copula':
+            # generate random returns w/ Gaussian copula
+            # (preserves the marginal distributions of the returns)
+            
+            # empirical CDF
+            ecdf = {}
+            for i in range(len(self.assets)):
+                asset_returns = self.returns.iloc[:, i].values
+                ecdf[i] = stats.ecdf(asset_returns)
+            
+            normal_samples = np.random.multivariate_normal(
+                np.zeros(len(self.assets)), self.returns.corr().values, (num_simulations, time_horizon)
+            )
+            uniform_samples = stats.norm.cdf(normal_samples)
+            
+            random_returns = np.zeros_like(uniform_samples)
+            for i in range(len(self.assets)):
+                for j in range(num_simulations):
+                    for k in range(time_horizon):
+                        u = uniform_samples[j, k, i]
+                        idx = np.searchsorted(ecdf[i][0], u)
+                        if idx == 0:
+                            random_returns[j, k, i] = self.returns.iloc[0, i]
+                        else:
+                            random_returns[j, k, i] = self.returns.iloc[idx-1, i]
+        else:
+            raise ValueError(f"Unknown method: {method}")
+        
+        for t in range(1, time_horizon + 1):
+            portfolio_returns = np.sum(random_returns[:, t-1, :] * weights, axis=1)
+            
+            simulation_results[:, t] = simulation_results[:, t-1] * (1 + portfolio_returns)
         
         return simulation_results
     
@@ -162,16 +266,18 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         metrics['min'] = np.min(returns)
         metrics['max'] = np.max(returns)
         
+        for p in [1, 5, 10, 25, 75, 90, 95, 99]:
+            metrics[f'percentile_{p}'] = np.percentile(returns, p)
+        
         # Value at Risk (VaR)
         metrics['VaR'] = -np.percentile(returns, alpha * 100)
         
         # Expected Shortfall (ES) / Conditional VaR (CVaR)
         metrics['ES'] = -np.mean(returns[returns <= -metrics['VaR']])
         
-        # Probability of loss
+        # probability of loss
         metrics['prob_loss'] = np.mean(returns < 0)
         
-        # Maximum drawdown
         max_drawdowns = np.zeros(simulation_results.shape[0])
         for i in range(simulation_results.shape[0]):
             running_max = np.maximum.accumulate(simulation_results[i, :])
@@ -184,6 +290,17 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         
         # Sharpe Ratio
         metrics['sharpe_ratio'] = (metrics['mean'] - self.risk_free_rate) / metrics['std']
+        
+        # Sortino Ratio (using downside deviation)
+        downside_returns = returns[returns < self.risk_free_rate]
+        downside_deviation = np.sqrt(np.mean((downside_returns - self.risk_free_rate) ** 2))
+        metrics['sortino_ratio'] = (metrics['mean'] - self.risk_free_rate) / downside_deviation if len(downside_returns) > 0 else np.nan
+        
+        # Omega Ratio
+        threshold = self.risk_free_rate
+        gains = returns[returns >= threshold] - threshold
+        losses = threshold - returns[returns < threshold]
+        metrics['omega_ratio'] = np.sum(gains) / np.sum(losses) if np.sum(losses) > 0 else np.inf
         
         return metrics
     
@@ -209,12 +326,10 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         
         time_horizon = simulation_results.shape[1] - 1
         
-        # Plot a subset of simulations for better visualization
         num_to_plot = min(100, simulation_results.shape[0])
         for i in range(num_to_plot):
             ax.plot(range(time_horizon + 1), simulation_results[i], 'b-', alpha=0.1)
         
-        # Plot percentile lines
         for p in percentiles:
             percentile_values = np.percentile(simulation_results, p, axis=0)
             ax.plot(range(time_horizon + 1), percentile_values, 'g-', linewidth=2, label=f'{p}th Percentile')
@@ -357,9 +472,29 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
             seed=seed
         )
         
+        print("Running multivariate normal simulation...")
+        normal_results = self.simulate_multivariate(
+            num_simulations=num_simulations,
+            time_horizon=time_horizon,
+            initial_value=initial_value,
+            method='normal',
+            seed=seed
+        )
+        
+        print("Running multivariate t simulation...")
+        t_results = self.simulate_multivariate(
+            num_simulations=num_simulations,
+            time_horizon=time_horizon,
+            initial_value=initial_value,
+            method='t',
+            seed=seed
+        )
+        
         print("Calculating risk metrics...")
         gbm_metrics = self.calculate_risk_metrics(gbm_results)
         bootstrap_metrics = self.calculate_risk_metrics(bootstrap_results)
+        normal_metrics = self.calculate_risk_metrics(normal_results)
+        t_metrics = self.calculate_risk_metrics(t_results)
         
         # Combine results
         results = {
@@ -370,12 +505,20 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
             'bootstrap': {
                 'simulation': bootstrap_results,
                 'metrics': bootstrap_metrics
+            },
+            'normal': {
+                'simulation': normal_results,
+                'metrics': normal_metrics
+            },
+            't': {
+                'simulation': t_results,
+                'metrics': t_metrics
             }
         }
         
         return results
     
-    def plot_method_comparison(self, comparison_results, figsize=(18, 12)):
+    def plot_method_comparison(self, comparison_results, figsize=(18, 15)):
         """
         Plot a comparison of different simulation methods.
         
@@ -384,7 +527,7 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         comparison_results : dict
             Dictionary containing the simulation results for each method
         figsize : tuple, optional
-            Figure size, by default (18, 12)
+            Figure size, by default (18, 15)
             
         Returns:
         --------
@@ -404,20 +547,47 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
             metrics_df.loc[method, 'ES (5%)'] = metrics['ES']
             metrics_df.loc[method, 'Max Drawdown'] = metrics['max_drawdown']
             metrics_df.loc[method, 'Sharpe Ratio'] = metrics['sharpe_ratio']
+            metrics_df.loc[method, 'Sortino Ratio'] = metrics['sortino_ratio']
+            metrics_df.loc[method, 'Omega Ratio'] = metrics['omega_ratio']
         
-        fig, axes = plt.subplots(2, 2, figsize=figsize)
+        fig, axes = plt.subplots(3, 2, figsize=figsize)
         
         axes = axes.flatten()
         
-        # Plot 1: Return distribution comparison
+        # [Plot 1] Percentile comparison across methods
         ax = axes[0]
+        percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
+        percentile_data = np.zeros((len(methods), len(percentiles)))
+        
+        for i, method in enumerate(methods):
+            for j, p in enumerate(percentiles):
+                key = f'percentile_{p}'
+                if key in comparison_results[method]['metrics']:
+                    percentile_data[i, j] = comparison_results[method]['metrics'][key]
+                else:
+                    final_values = comparison_results[method]['simulation'][:, -1]
+                    initial_value = comparison_results[method]['simulation'][0, 0]
+                    returns = (final_values - initial_value) / initial_value
+                    percentile_data[i, j] = np.percentile(returns, p)
+        
+        for i, method in enumerate(methods):
+            ax.plot(percentiles, percentile_data[i], marker='o', linewidth=2, label=method.capitalize())
+        
+        ax.set_xlabel('Percentile')
+        ax.set_ylabel('Return')
+        ax.set_title('Return Percentiles Across Methods')
+        ax.grid(True)
+        ax.legend()
+        
+        # [Plot 2] Return distribution comparison
+        ax = axes[1]
         
         for method in methods:
             final_values = comparison_results[method]['simulation'][:, -1]
             initial_value = comparison_results[method]['simulation'][0, 0]
             returns = (final_values - initial_value) / initial_value
             
-            sns.kdeplot(returns, ax=ax, label=method.upper())
+            sns.kdeplot(returns, ax=ax, label=method.capitalize())
         
         ax.set_xlabel('Return')
         ax.set_ylabel('Density')
@@ -425,8 +595,25 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         ax.grid(True)
         ax.legend()
         
-        # Plot 2: Risk metrics comparison
-        ax = axes[1]
+        # [Plot 3] Return and volatility comparison
+        ax = axes[2]
+        
+        x = [comparison_results[method]['metrics']['std'] for method in methods]
+        y = [comparison_results[method]['metrics']['mean'] for method in methods]
+        
+        ax.scatter(x, y, s=100)
+        
+        for i, method in enumerate(methods):
+            ax.annotate(method.capitalize(), (x[i], y[i]), xytext=(10, 0), 
+                       textcoords='offset points', fontsize=12)
+        
+        ax.set_xlabel('Volatility')
+        ax.set_ylabel('Expected Return')
+        ax.set_title('Return and Volatility Comparison')
+        ax.grid(True)
+        
+        # [Plot 4] Risk metrics comparison - VaR and ES
+        ax = axes[3]
         
         x = np.arange(len(methods))
         width = 0.35
@@ -441,28 +628,12 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         ax.set_ylabel('Value')
         ax.set_title('Risk Metrics Comparison - VaR and ES')
         ax.set_xticks(x)
-        ax.set_xticklabels([method.upper() for method in methods])
+        ax.set_xticklabels([method.capitalize() for method in methods])
         ax.grid(True)
         ax.legend()
         
-        # Plot 3: Path comparison (average paths)
-        ax = axes[2]
-        
-        time_horizon = comparison_results[methods[0]]['simulation'].shape[1] - 1
-        
-        for method in methods:
-            avg_path = np.mean(comparison_results[method]['simulation'], axis=0)
-            
-            ax.plot(range(time_horizon + 1), avg_path, linewidth=2, label=method.upper())
-        
-        ax.set_xlabel('Time (Days)')
-        ax.set_ylabel('Portfolio Value')
-        ax.set_title('Average Path Comparison')
-        ax.grid(True)
-        ax.legend()
-        
-        # Plot 4: Maximum drawdown comparison
-        ax = axes[3]
+        # [Plot 5] Risk metrics comparison - Max Drawdown
+        ax = axes[4]
         
         max_dd_values = [comparison_results[method]['metrics']['max_drawdown'] for method in methods]
         
@@ -472,8 +643,24 @@ class MonteCarloEnhancedMarkowitzModel(MarkowitzModel):
         ax.set_ylabel('Maximum Drawdown')
         ax.set_title('Risk Metrics Comparison - Maximum Drawdown')
         ax.set_xticks(x)
-        ax.set_xticklabels([method.upper() for method in methods])
+        ax.set_xticklabels([method.capitalize() for method in methods])
         ax.grid(True)
+        
+        # [Plot 6] Path comparison (average paths)
+        ax = axes[5]
+        
+        time_horizon = comparison_results[methods[0]]['simulation'].shape[1] - 1
+        
+        for method in methods:
+            avg_path = np.mean(comparison_results[method]['simulation'], axis=0)
+            
+            ax.plot(range(time_horizon + 1), avg_path, linewidth=2, label=method.capitalize())
+        
+        ax.set_xlabel('Time (Days)')
+        ax.set_ylabel('Portfolio Value')
+        ax.set_title('Average Path Comparison')
+        ax.grid(True)
+        ax.legend()
         
         plt.tight_layout()
         
