@@ -10,11 +10,13 @@ size risk and value risk factors to the market risk factor.
 @author: Pedro Gronda Garrigues
 """
 
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import statsmodels.api as sm
+from sklearn.linear_model import LinearRegression
 import warnings
 from model import MarkowitzModel
 
@@ -42,6 +44,26 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         self.idiosyncratic_var = None
         self.factor_expected_returns = None
         
+    def load_factor_data(self, factor_data_path):
+        """
+        Load factor data from a CSV file.
+        
+        Parameters:
+        -----------
+        factor_data_path : str
+            Path to the CSV file containing factor data
+            
+        Returns:
+        --------
+        pandas.DataFrame
+            DataFrame containing the factor returns
+        """
+        factor_data = pd.read_csv(factor_data_path, index_col='Date', parse_dates=True)
+        
+        self.factor_returns = factor_data
+        
+        return factor_data
+    
     def generate_synthetic_factor_data(self, start_date=None, end_date=None):
         """
         Generate synthetic factor data for demonstration purposes.
@@ -67,22 +89,26 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
             dates = pd.date_range(start=start_date, end=end_date, freq='B')
             dates = dates[dates.isin(self.returns.index)]
         
-        # Generate synthetic factor returns
-        np.random.seed(42)  # For reproducibility
+        # generate synthetic factor returns
+        np.random.seed(42) # IMPORTANT: for reproducibility
         
-        # Market factor (correlated with average market return)
+        # market factor (correlated with average market return)
         market_factor = self.returns.mean(axis=1) + np.random.normal(0, 0.005, len(dates))
         
-        # Size factor (SMB - Small Minus Big)
+        # size factor (SMB - Small Minus Big)
         smb_factor = np.random.normal(0.001, 0.01, len(dates))
         
-        # Value factor (HML - High Minus Low)
+        # value factor (HML - High Minus Low)
         hml_factor = np.random.normal(0.002, 0.012, len(dates))
+        
+        # momentum factor (UMD - Up Minus Down)
+        umd_factor = np.random.normal(0.003, 0.015, len(dates))
         
         factor_data = pd.DataFrame({
             'MKT': market_factor,
             'SMB': smb_factor,
-            'HML': hml_factor
+            'HML': hml_factor,
+            'UMD': umd_factor
         }, index=dates)
         
         self.factor_returns = factor_data
@@ -134,7 +160,7 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         
         return factor_loadings
     
-    def estimate_factor_expected_returns(self, method='historical'):
+    def estimate_factor_expected_returns(self, method='historical', risk_premium=None):
         """
         Estimate expected returns for the factors.
         
@@ -143,6 +169,9 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         method : str, optional
             Method to estimate factor expected returns, by default 'historical'
             Options: 'historical', 'risk_premium'
+        risk_premium : dict, optional
+            Dictionary of risk premiums for each factor, by default None
+            Required if method is 'risk_premium'
             
         Returns:
         --------
@@ -154,6 +183,11 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         
         if method == 'historical':
             factor_expected_returns = self.factor_returns.mean() * 252
+        elif method == 'risk_premium':
+            if risk_premium is None:
+                raise ValueError("Risk premiums must be provided when using 'risk_premium' method")
+            
+            factor_expected_returns = pd.Series(risk_premium)
         else:
             raise ValueError(f"Unknown method: {method}")
         
@@ -195,10 +229,10 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         expected_returns = pd.Series(index=self.assets)
         
         for asset in self.assets:
-            # Start with alpha
+            # start with alpha
             expected_return = self.factor_loadings.loc[asset, 'alpha']
             
-            # Add factor contributions
+            # add factor contributions
             for factor in self.factor_expected_returns.index:
                 if factor in self.factor_loadings.columns:
                     expected_return += self.factor_loadings.loc[asset, factor] * self.factor_expected_returns[factor]
@@ -232,7 +266,7 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         
         return cov_matrix_df
     
-    def generate_efficient_frontier_with_factors(self, num_portfolios=100):
+    def generate_efficient_frontier_with_factors(self, num_portfolios=100, min_return=None, max_return=None):
         """
         Generate the efficient frontier using factor-based expected returns and covariance matrix.
         
@@ -240,6 +274,10 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         -----------
         num_portfolios : int, optional
             Number of portfolios to generate, by default 100
+        min_return : float, optional
+            Minimum target return, by default None
+        max_return : float, optional
+            Maximum target return, by default None
             
         Returns:
         --------
@@ -252,7 +290,7 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         original_returns = self.returns
         original_cov_matrix = self.cov_matrix
         
-        # Replace with factor-based values
+        # replace with factor-based values
         self.returns = pd.DataFrame(
             np.tile(expected_returns.values, (len(original_returns), 1)) / 252,
             columns=self.assets,
@@ -261,13 +299,36 @@ class FactorEnhancedMarkowitzModel(MarkowitzModel):
         
         self.cov_matrix = cov_matrix
         
-        efficient_frontier = super().generate_efficient_frontier(num_portfolios)
+        efficient_frontier = super().generate_efficient_frontier(num_portfolios, min_return, max_return)
         
-        # Restore original values
         self.returns = original_returns
         self.cov_matrix = original_cov_matrix
         
         return efficient_frontier
+    
+    def compare_returns_with_factors(self):
+        """
+        Compare historical returns with factor-based expected returns.
+        
+        Returns:
+        --------
+        pandas.DataFrame
+            DataFrame containing the comparison
+        """
+        # historical annualized returns
+        historical_returns = self.returns.mean() * 252
+        
+        # factor-based expected returns
+        factor_returns = self.estimate_returns_with_factors()
+        
+        comparison = pd.DataFrame({
+            'Historical': historical_returns,
+            'Factor-based': factor_returns,
+            'Difference': factor_returns - historical_returns,
+            'Percent Change': (factor_returns - historical_returns) / historical_returns * 100
+        })
+        
+        return comparison
     
     def analyze_factor_contributions(self):
         """
