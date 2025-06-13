@@ -7,15 +7,21 @@ techniques to predict future returns and volatility.
 It uses:
 1. ARIMA models for time series forecasting of returns
 2. GARCH models for volatility forecasting
+3. LSTM neural networks as an alternative approach
 
 @author: Pedro Gronda Garrigues
 """
 
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from statsmodels.tsa.arima.model import ARIMA
 from arch import arch_model
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM, Dropout
+from tensorflow.keras.optimizers import Adam
 import warnings
 from model import MarkowitzModel
 
@@ -64,15 +70,15 @@ class MLEnhancedMarkowitzModel(MarkowitzModel):
             
             asset_returns = self.returns[asset]
             
-            # Fit ARIMA model
-            # Using a simple ARIMA(1,0,1) model for demonstration
-            # In practice, we would use auto_arima or grid search to find the best parameters
+            # fit ARIMA model
+            # using a simple ARIMA(1,0,1) model for demonstration
+            # in practice -> use auto_arima or grid search to find the best parameters
             model = ARIMA(asset_returns, order=(1, 0, 1))
             model_fit = model.fit()
             
             forecast = model_fit.forecast(steps=forecast_periods)
             
-            predicted_return = forecast.mean() * 252  # Annualize
+            predicted_return = forecast.mean() * 252
             predicted_returns[asset] = predicted_return
         
         # Store predicted returns
@@ -105,8 +111,8 @@ class MLEnhancedMarkowitzModel(MarkowitzModel):
             
             asset_returns = self.returns[asset].values
             
-            # Fit GARCH model
-            # Using a simple GARCH(1,1) model for demonstration
+            # fit GARCH model
+            # using a simple GARCH(1,1) model (for demonstration)
             model = arch_model(asset_returns, vol='Garch', p=1, q=1)
             model_fit = model.fit(disp='off')
             
@@ -114,12 +120,14 @@ class MLEnhancedMarkowitzModel(MarkowitzModel):
             
             forecasted_var = forecast.variance.iloc[-1].mean()
             
-            predicted_volatility = np.sqrt(forecasted_var * 252)  # Annualize
+            predicted_volatility = np.sqrt(forecasted_var * 252)
             
             predicted_cov[i, i] = predicted_volatility ** 2
         
-        # For simplicity, use correlation from historical data
+        # for simplicity, use correlation from historical data
         # and combine it with the predicted volatilities to get the covariance matrix
+        # in practice -> use a more sophisticated approach to predict the correlation matrix
+        
         historical_corr = self.returns.corr().values
         
         predicted_std = np.sqrt(np.diag(predicted_cov))
@@ -137,7 +145,81 @@ class MLEnhancedMarkowitzModel(MarkowitzModel):
         
         return self.predicted_cov_matrix
     
-    def generate_efficient_frontier_with_predictions(self, num_portfolios=100):
+    def predict_returns_lstm(self, forecast_periods=30, epochs=50, batch_size=32, sequence_length=60):
+        """
+        Predict future returns using LSTM neural networks.
+        
+        Parameters:
+        -----------
+        forecast_periods : int, optional
+            Number of periods to forecast, by default 30
+        epochs : int, optional
+            Number of training epochs, by default 50
+        batch_size : int, optional
+            Batch size for training, by default 32
+        sequence_length : int, optional
+            Length of input sequences, by default 60
+            
+        Returns:
+        --------
+        pandas.Series
+            Predicted annualized returns for each asset
+        """
+        if self.returns is None:
+            raise ValueError("Data must be loaded before predicting returns")
+        
+        predicted_returns = {}
+        
+        for asset in self.assets:
+            print(f"Training LSTM model for {asset}...")
+            
+            asset_returns = self.returns[asset].values.reshape(-1, 1)
+            
+            scaler = MinMaxScaler(feature_range=(0, 1))
+            scaled_data = scaler.fit_transform(asset_returns)
+            
+            # sequences for training
+            X, y = [], []
+            for i in range(sequence_length, len(scaled_data)):
+                X.append(scaled_data[i-sequence_length:i, 0])
+                y.append(scaled_data[i, 0])
+            X, y = np.array(X), np.array(y)
+            
+            # reshape X to be [samples, time steps, features]
+            X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+            
+            # LSTM model
+            model = Sequential()
+            model.add(LSTM(units=50, return_sequences=True, input_shape=(X.shape[1], 1)))
+            model.add(Dropout(0.2))
+            model.add(LSTM(units=50, return_sequences=False))
+            model.add(Dropout(0.2))
+            model.add(Dense(units=1))
+            
+            model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
+            
+            model.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=0)
+            
+            last_sequence = scaled_data[-sequence_length:].reshape(1, sequence_length, 1)
+            future_returns = []
+            
+            for _ in range(forecast_periods):
+                next_return = model.predict(last_sequence, verbose=0)[0, 0]
+                future_returns.append(next_return)
+                
+                last_sequence = np.append(last_sequence[:, 1:, :], [[next_return]], axis=1)
+            
+            future_returns = np.array(future_returns).reshape(-1, 1)
+            future_returns = scaler.inverse_transform(future_returns)
+            
+            predicted_return = future_returns.mean() * 252
+            predicted_returns[asset] = predicted_return[0]
+        
+        self.predicted_returns = pd.Series(predicted_returns)
+        
+        return self.predicted_returns
+    
+    def generate_efficient_frontier_with_predictions(self, num_portfolios=100, min_return=None, max_return=None):
         """
         Generate the efficient frontier using predicted returns and covariance matrix.
         
@@ -145,6 +227,10 @@ class MLEnhancedMarkowitzModel(MarkowitzModel):
         -----------
         num_portfolios : int, optional
             Number of portfolios to generate, by default 100
+        min_return : float, optional
+            Minimum target return, by default None
+        max_return : float, optional
+            Maximum target return, by default None
             
         Returns:
         --------
@@ -168,9 +254,8 @@ class MLEnhancedMarkowitzModel(MarkowitzModel):
         
         self.cov_matrix = self.predicted_cov_matrix
         
-        efficient_frontier = super().generate_efficient_frontier(num_portfolios)
+        efficient_frontier = super().generate_efficient_frontier(num_portfolios, min_return, max_return)
         
-        # Restore original values
         self.returns = original_returns
         self.cov_matrix = original_cov_matrix
         
