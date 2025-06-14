@@ -30,39 +30,30 @@ def download_stock_data(symbols, start_date, end_date, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     
     for symbol in symbols:
-        print(f"Downloading data for {symbol}...")
+        print(f"STATUS: Downloading data for {symbol}...")
         
-        try:
-            stock = yf.Ticker(symbol)
-            data = stock.history(start=start_date, end=end_date)
-            
-            if data.empty:
-                print(f"No data available for {symbol}")
-                continue
-            
-            data = data.reset_index()
-            
-            output_file = os.path.join(output_dir, f"{symbol}.csv")
-            data.to_csv(output_file, index=False)
-            
-            print(f"Data for {symbol} saved to {output_file}")
+        stock = yf.Ticker(symbol)
+        data = stock.history(start=start_date, end=end_date)
         
-        except Exception as e:
-            print(f"Error downloading data for {symbol}: {e}")
+        data = data.reset_index()
+        
+        output_file = os.path.join(output_dir, f"{symbol}.csv")
+        data.to_csv(output_file, index=False)
+        
+        print(f"Data for {symbol} saved to {output_file}")
 
 def main():
     """
     Main function to download sample data.
     """
     
-    # Define stock symbols to download
-    symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA']
+    # define stock symbols to download (select whichever you want)
+    symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'JPM', 'V', 'JNJ']
     
-    # Date range (5 years)
+    # date range (5 years)
     end_date = datetime.now().strftime('%Y-%m-%d')
     start_date = (datetime.now() - timedelta(days=5*365)).strftime('%Y-%m-%d')
     
-    # Create data directory in the project root
     output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
     
     print(f"Downloading data for {len(symbols)} stocks from {start_date} to {end_date}...")
