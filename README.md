@@ -1,5 +1,7 @@
 # Markowitz Portfolio Optimization
 
+![MCM Logo](media/mcm_logo.jpg)
+
 This project implements the Markowitz portfolio optimization model, which is used to construct an efficient frontier of optimal portfolios that offer the highest expected return for a given level of risk.
 
 ## Overview
