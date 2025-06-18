@@ -7,6 +7,7 @@ This project implements the Markowitz portfolio optimization model, which is use
 The Markowitz model, also known as Modern Portfolio Theory (MPT), is a mathematical framework for assembling a portfolio of assets such that the expected return is maximized for a given level of risk. It was pioneered by Harry Markowitz in 1952 and later earned him the Nobel Prize in Economics.
 
 Implementation includes:
+
 - Loading financial data from CSV files or fetching from AlphaVantage API
 - Calculating expected returns and covariance matrix
 - Generating the efficient frontier
@@ -19,17 +20,17 @@ Implementation includes:
   - Real-time data integration with APIs
 
 @author: Pedro Gronda Garrigues
-@email: pgrondagarrigues@gmail.com | pgg6@st-andrews.ac.uk
+@email:  pgrondagarrigues@gmail.com | pgg6@st-andrews.ac.uk
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.9+
 - Required packages:
 
 ```bash
-pip install -r requirements.txt
+pip install numpy pandas matplotlib scipy requests statsmodels arch tensorflow scikit-learn seaborn
 ```
 
 ### Setup
@@ -40,12 +41,7 @@ git clone <repository-url>
 cd markowitz
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. (Optional) Get an Alpha Vantage API key:
+2. (Optional) Get an Alpha Vantage API key:
    - Sign up for a free API key at [Alpha Vantage](https://www.alphavantage.co/support/#api-key)
    - Create a file at `config/api_keys.json` with the following content:
    ```json
@@ -90,6 +86,9 @@ python src/main.py --csv --factor
 # using Monte Carlo enhancement
 python src/main.py --csv --monte-carlo
 
+# using all enhancements
+python src/main.py --csv --all
+
 # get help
 python src/main.py --help
 ```
@@ -97,7 +96,7 @@ python src/main.py --help
 ### Downloading Sample Data
 
 ```bash
-# download 5 years of data for selected stocks
+# download 5 years of data for selected (popular) stocks
 python src/download_data.py
 ```
 
@@ -128,7 +127,7 @@ for asset, weight in optimal_portfolio['weights'].items():
     print(f"  {asset}: {weight:.4f}")
 
 # plot the efficient frontier
-fig = model.plot_efficient_frontier(show_assets=True, show_optimal=True)
+fig = model.plot_efficient_frontier(show_assets=True, show_cal=True, show_optimal=True, random_portfolios=500)
 fig.savefig('efficient_frontier.png')
 ```
 
@@ -248,7 +247,7 @@ fig, metrics_df = model.plot_method_comparison(comparison_results)
 fig.savefig('mc_method_comparison.png')
 ```
 
-### API Integration for Real-Time Data
+### API Integration for Real-Time Data [EXAMPLE]
 
 ```python
 from src.api_integration import APIEnhancedMarkowitzModel
@@ -257,7 +256,7 @@ from src.api_integration import APIEnhancedMarkowitzModel
 model = APIEnhancedMarkowitzModel(risk_free_rate=0.02, api_key='YOUR_API_KEY')
 
 # update model with API data
-model.update_model_with_api_data(['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'])
+model.update_model_with_api_data(['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'], data_type='daily')
 
 # generate the efficient frontier
 model.generate_efficient_frontier()
@@ -276,9 +275,9 @@ fig.savefig('api_correlation_matrix.png')
 
 # schedule regular updates
 model.schedule_regular_updates(
-    ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'],
+    ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'], # select stocks of choice
     update_interval_minutes=60,
-    max_updates=24  # every hour for a day
+    max_updates=24 # every hour for a day
 )
 ```
 
@@ -296,6 +295,8 @@ Date,Open,High,Low,Close,Volume
 Each CSV file should represent one asset, and the filename (without extension) will be used as the asset name.
 
 ## Key Concepts
+
+```Source: Investopedia (the best)```
 
 ### Efficient Frontier
 
@@ -331,10 +332,15 @@ Monte Carlo simulations use random sampling to estimate the distribution of poss
 - Integration with more data sources
 - Optimization for specific investment goals (e.g., income, growth)
 
+## TODO
+
+- For ML enhancements: use auto_arima or grid search to find the best parameters
+- For ML enhancements: improve correlation matrix prediction
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 DISCLAIMER: This project is fully open-source. If you wish to contribute, simply submit a Pull Request and I (the author) will review it a.s.a.p.!
 
-Originally a project for Mercury Capital Management, University of St Andrews, project proposal.
+Originally a project for Mercury Capital Management, University of St Andrews, project proposal. I then got bored during a plane ride and added enhancements...

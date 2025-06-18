@@ -1,0 +1,6 @@
+# ignore
+output/*
+data/
+
+# config
+config/api_keys.json
